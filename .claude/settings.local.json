@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:github.com)",
+      "Bash(ffmpeg:*)",
+      "WebSearch",
+      "Bash(python3 -c \"\nimport sys\nsys.path.insert(0, ''src'')\nfrom converter import MusicConverter, AudioInfo\nfrom pathlib import Path\n\n# Create test scenario\naudio_info = AudioInfo(\n    codec=''mp3'',\n    bitrate=320000,  # 320kbps\n    sample_rate=44100,\n    duration=180.0,\n    channels=2\n)\n\nconverter = MusicConverter(Path(''.''), Path(''.''))\n\n# Test MP3 320kbps → AAC 320kbps\nneeds_conv = converter.needs_conversion(audio_info, ''aac'', 320)\nprint(f''Source: MP3 @ 320kbps'')\nprint(f''Target: AAC @ 320kbps'')\nprint(f''Will Convert: {needs_conv}'')\nprint(f''Action: {\"\"CONVERT\"\" if needs_conv else \"\"COPY (NO CONVERSION)\"\"}'')\n\")",
+      "Bash(ffprobe:*)",
+      "Bash(python3:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
