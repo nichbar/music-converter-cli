@@ -289,3 +289,21 @@ Opus
     def prompt_for_input(self, question: str, default: str = "", choices: List[str] = None) -> str:
         """Prompt user for input"""
         return Prompt.ask(question, default=default, choices=choices)
+
+    def get_thread_count(self) -> int:
+        """Get number of threads for parallel processing"""
+        import os
+        default_threads = max(1, (os.cpu_count() or 1) // 2)
+
+        self.console.print(f"\n[bold]Parallel Processing Settings:[/bold]")
+        self.console.print(f"[dim]Your system has {os.cpu_count() or 1} CPU cores.[/dim]")
+        self.console.print(f"[dim]Recommended: {default_threads} threads (half of CPU cores)[/dim]")
+
+        while True:
+            choice = IntPrompt.ask(
+                "\n[bold]Number of threads[/bold]",
+                default=default_threads
+            )
+            if choice >= 1:
+                return choice
+            self.console.print("[red]Please enter a valid number (minimum 1)[/red]")

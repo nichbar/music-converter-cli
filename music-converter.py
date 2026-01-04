@@ -11,6 +11,9 @@ Usage:
 import click
 import sys
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import os
 
 from src.converter import MusicConverter
 from src.metadata import MetadataHandler
@@ -24,8 +27,9 @@ from src.reporter import ReportGenerator
 @click.option('--force', is_flag=True, help='Force conversion without prompts (MP3 320kbps)')
 @click.option('--codec', type=click.Choice(['mp3', 'aac', 'flac', 'opus']), help='Target codec (overrides interactive)')
 @click.option('--bitrate', type=int, help='Target bitrate in kbps (ignored for FLAC)')
+@click.option('--threads', type=int, help='Number of threads for parallel processing')
 @click.option('--dry-run', is_flag=True, help='Show what would be converted without actually converting')
-def main(source: str, target: str, force: bool, codec: str, bitrate: int, dry_run: bool):
+def main(source: str, target: str, force: bool, codec: str, bitrate: int, threads: int, dry_run: bool):
     """
     Batch convert audio files with metadata preservation and smart conversion detection.
 
@@ -94,61 +98,82 @@ def main(source: str, target: str, force: bool, codec: str, bitrate: int, dry_ru
         # Create target directory
         converter.create_target_directory()
 
-        # Process files with progress bar
+        # Determine thread count
+        if force or threads:
+            # Use provided value or default (half CPU cores)
+            num_threads = threads if threads else max(1, (os.cpu_count() or 1) // 2)
+            ui.show_info(f"Using {num_threads} thread(s) for processing")
+        else:
+            # Interactive mode - ask user
+            num_threads = ui.get_thread_count()
+            ui.show_info(f"Using {num_threads} thread(s) for processing")
+
+        # Thread-safe lock for progress updates
+        progress_lock = threading.Lock()
+        completed_count = 0
+        total_files = len(audio_files)
+
+        # Process files concurrently with progress bar
         results = []
-        with ui.create_progress_bar(len(audio_files)) as (progress, task):
-            for file_path in audio_files:
-                progress.update(task, description=f"Processing {file_path.name}")
+        with ui.create_progress_bar(total_files) as (progress, task):
+            with ThreadPoolExecutor(max_workers=num_threads) as executor:
+                # Submit all jobs
+                future_to_file = {
+                    executor.submit(converter.process_file, fp, target_codec, target_bitrate): fp
+                    for fp in audio_files
+                }
 
-                try:
-                    if dry_run:
-                        # Dry run - just analyze what would happen
-                        audio_info = converter.get_audio_info(file_path)
-                        needs_conversion = converter.needs_conversion(audio_info, target_codec, target_bitrate)
+                # Collect results as they complete
+                for future in as_completed(future_to_file):
+                    file_path = future_to_file[future]
 
-                        # Create a dummy result for dry run
-                        from src.converter import ConversionResult
-                        result = ConversionResult(
-                            source_path=file_path,
-                            target_path=file_path,  # Not used in dry run
-                            action='converted' if needs_conversion else 'copied',
-                            source_size=converter.get_file_size(file_path),
-                            target_size=converter.get_file_size(file_path),  # Same in dry run
-                            source_format={
-                                'codec': audio_info.codec,
-                                'bitrate': audio_info.bitrate,
-                                'sample_rate': audio_info.sample_rate,
-                                'duration': audio_info.duration
-                            }
-                        )
-                    else:
-                        # Actual conversion
-                        result = converter.process_file(file_path, target_codec, target_bitrate)
+                    try:
+                        result = future.result()
 
-                        # Apply metadata if conversion was successful (only for converted files)
+                        # Apply metadata AFTER conversion (sequential, thread-safe)
                         if result.action == 'converted' and not dry_run:
-                            metadata_success = metadata_handler.apply_metadata(result.source_path, result.target_path)
+                            metadata_success = metadata_handler.apply_metadata(
+                                result.source_path, result.target_path
+                            )
                             if not metadata_success:
                                 ui.show_warning(f"Could not apply metadata to {file_path.name}")
 
-                    results.append(result)
+                        results.append(result)
 
-                    # Show status for the file
-                    status = "converted" if result.action == 'converted' else \
-                            "copied" if result.action == 'copied' else "error"
+                        # Show status for the file
+                        if result.action == 'converted':
+                            ui.show_file_status(
+                                result.source_path.name, "converted",
+                                result.source_size, result.target_size
+                            )
+                        elif result.action == 'copied':
+                            ui.show_file_status(result.source_path.name, "copied")
+                        elif result.action == 'error':
+                            ui.show_file_status(result.source_path.name, "error")
 
-                    if result.action == 'converted':
-                        ui.show_file_status(result.source_path.name, status, result.source_size, result.target_size)
-                    elif result.action == 'copied':
-                        ui.show_file_status(result.source_path.name, status)
-                    elif result.action == 'error':
-                        ui.show_file_status(result.source_path.name, "error")
+                    except Exception as e:
+                        ui.show_error(f"Error processing {file_path.name}: {e}")
+                        # Create error result
+                        from src.converter import ConversionResult
+                        error_result = ConversionResult(
+                            source_path=file_path,
+                            target_path=file_path,
+                            action='error',
+                            source_size=converter.get_file_size(file_path),
+                            target_size=0,
+                            source_format={},
+                            error_message=str(e)
+                        )
+                        results.append(error_result)
+                        ui.show_file_status(file_path.name, "error")
 
-                    progress.update(task, advance=1)
-
-                except Exception as e:
-                    ui.show_error(f"Error processing {file_path.name}: {e}")
-                    progress.update(task, advance=1)
+                    # Thread-safe progress update
+                    with progress_lock:
+                        completed_count += 1
+                        progress.update(
+                            task, advance=1,
+                            description=f"Processing ({completed_count}/{total_files})"
+                        )
 
         # Calculate and show statistics
         if results:

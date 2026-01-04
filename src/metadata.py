@@ -165,13 +165,19 @@ class MetadataHandler:
                 for flac_tag, tag_name in tag_mapping.items():
                     # Vorbis comments are case-insensitive
                     for key in audio.tags:
-                        if key.lower() == flac_tag.lower():
-                            value = audio.tags[key]
-                            if isinstance(value, list) and value:
-                                tags[tag_name] = str(value[0])
-                            else:
-                                tags[tag_name] = str(value)
-                            break
+                        try:
+                            # Handle the case where key might be a tuple or other type
+                            key_str = str(key) if not isinstance(key, str) else key
+                            if key_str.lower() == flac_tag.lower():
+                                value = audio.tags[key]
+                                if isinstance(value, list) and value:
+                                    tags[tag_name] = str(value[0])
+                                else:
+                                    tags[tag_name] = str(value)
+                                break
+                        except (AttributeError, ValueError):
+                            # Skip problematic keys
+                            continue
 
                 # Handle artwork (FLAC can have multiple pictures)
                 if audio.pictures:
@@ -203,13 +209,19 @@ class MetadataHandler:
 
                 for ogg_tag, tag_name in tag_mapping.items():
                     for key in audio.tags:
-                        if key.lower() == ogg_tag.lower():
-                            value = audio.tags[key]
-                            if isinstance(value, list) and value:
-                                tags[tag_name] = str(value[0])
-                            else:
-                                tags[tag_name] = str(value)
-                            break
+                        try:
+                            # Handle the case where key might be a tuple or other type
+                            key_str = str(key) if not isinstance(key, str) else key
+                            if key_str.lower() == ogg_tag.lower():
+                                value = audio.tags[key]
+                                if isinstance(value, list) and value:
+                                    tags[tag_name] = str(value[0])
+                                else:
+                                    tags[tag_name] = str(value)
+                                break
+                        except (AttributeError, ValueError):
+                            # Skip problematic keys
+                            continue
 
             return tags
         except Exception as e:
